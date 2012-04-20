@@ -1,5 +1,6 @@
 ﻿// Danial Afzal
 // iotasquared@gmail.com
+// revils@live.it
 using System;
 using System.Collections.Generic;
 using System.Text;
@@ -8,20 +9,30 @@ using System.Windows.Forms;
 using System.Text.RegularExpressions;
 using System.Drawing;
 using System.IO;
+using System.Threading;
 
 namespace SwtorAddon
 {
     public class SwtorParser : IActPluginV1
     {
+        private bool _cbIdleEnd;
         public void DeInitPlugin()
         {
             ActGlobals.oFormActMain.BeforeLogLineRead -= ParseLine;
+
+            UserControl opMainTableGen = (UserControl) ActGlobals.oFormActMain.OptionsControlSets[@"Main Table/Encounters\General"][0];
+            CheckBox cbIdleEnd = (CheckBox) opMainTableGen.Controls["cbIdleEnd"];
+            cbIdleEnd.Checked = _cbIdleEnd;
+            ActGlobals.oFormActMain.UpdateCheckClicked -= oFormActMain_UpdateCheckClicked;
         }
 
         Regex regex;
-        const int DMG = 3, HEALS = 4, THREAT = 16;
+        const int DMG = (int) SwingTypeEnum.Melee, HEALS = (int) SwingTypeEnum.Healing, THREAT = (int) SwingTypeEnum.Threat;
+        Label lblStatus;	// The status label that appears in ACT's Plugin tab        
+
         public void InitPlugin(System.Windows.Forms.TabPage pluginScreenSpace, System.Windows.Forms.Label pluginStatusText)
         {
+            lblStatus = pluginStatusText;	// Hand the status label's reference to our local var
             this.SetupSwtorEnvironment();
             ActGlobals.oFormActMain.LogPathHasCharName = false;
             ActGlobals.oFormActMain.LogFileFilter = "*.txt";
@@ -30,8 +41,21 @@ namespace SwtorAddon
             ActGlobals.oFormActMain.BeforeLogLineRead += new LogLineEventDelegate(ParseLine);
             ActGlobals.oFormActMain.GetDateTimeFromLog = new FormActMain.DateTimeLogParser(ParseDateTime);
             ActGlobals.oFormActMain.LogFileChanged += new LogFileChangedDelegate(oFormActMain_LogFileChanged);
-            regex = new Regex(@"\[(.*)\] \[(.*)\] \[(.*)\] \[(.*)\] \[(.*)\] \((.*)\)[.<]*([!>]*)[.<]*([!>]*)[>]*", 
+            regex = new Regex(@"\[(.*)\] \[(.*)\] \[(.*)\] \[(.*)\] \[(.*)\] \((.*)\)[.<]*([!>]*)[.<]*([!>]*)[>]*",
                 RegexOptions.Compiled);
+
+            // All encounters are set by Enter/ExitCombat.
+            UserControl opMainTableGen = (UserControl) ActGlobals.oFormActMain.OptionsControlSets[@"Main Table/Encounters\General"][0];
+            CheckBox cbIdleEnd = (CheckBox) opMainTableGen.Controls["cbIdleEnd"];
+            _cbIdleEnd = cbIdleEnd.Checked;
+            cbIdleEnd.Checked = false;
+
+            /* disabled
+            ActGlobals.oFormActMain.UpdateCheckClicked += new FormActMain.NullDelegate(oFormActMain_UpdateCheckClicked);
+            if (ActGlobals.oFormActMain.GetAutomaticUpdatesAllowed())   // If ACT is set to automatically check for updates, check for updates to the plugin
+                new Thread(new ThreadStart(oFormActMain_UpdateCheckClicked)).Start();	// If we don't put this on a separate thread, web latency will delay the plugin init phase
+            */
+            lblStatus.Text = "Plugin Started";
         }
 
 
@@ -46,15 +70,15 @@ namespace SwtorAddon
             CombatantData.ColumnDefs.Remove("Cures");
             CombatantData.ColumnDefs.Remove("PowerDrain");
             CombatantData.ColumnDefs.Remove("PowerReplenish");
-            CombatantData.ColumnDefs["Threat +/-"] = 
-                new CombatantData.ColumnDef("Threat +/-", false, "VARCHAR(32)", 
-                    "ThreatStr", (Data) => { return Data.GetThreatStr("Threat Done"); }, 
-                    (Data) => { return Data.GetThreatStr("Threat Done"); }, 
+            CombatantData.ColumnDefs["Threat +/-"] =
+                new CombatantData.ColumnDef("Threat +/-", false, "VARCHAR(32)",
+                    "ThreatStr", (Data) => { return Data.GetThreatStr("Threat Done"); },
+                    (Data) => { return Data.GetThreatStr("Threat Done"); },
                     (Left, Right) => { return Left.GetThreatDelta("Threat Done").CompareTo(Right.GetThreatDelta("Threat Done")); });
-            CombatantData.ColumnDefs["ThreatDelta"] = 
-                new CombatantData.ColumnDef("ThreatDelta", false, "INT", "ThreatDelta", 
-                    (Data) => { return Data.GetThreatDelta("Threat Done").ToString(ActGlobals.mainTableShowCommas ? "#,0" : "0"); }, 
-                    (Data) => { return Data.GetThreatDelta("Threat Done").ToString(); }, 
+            CombatantData.ColumnDefs["ThreatDelta"] =
+                new CombatantData.ColumnDef("ThreatDelta", false, "INT", "ThreatDelta",
+                    (Data) => { return Data.GetThreatDelta("Threat Done").ToString(ActGlobals.mainTableShowCommas ? "#,0" : "0"); },
+                    (Data) => { return Data.GetThreatDelta("Threat Done").ToString(); },
                     (Left, Right) => { return Left.GetThreatDelta("Threat Done").CompareTo(Right.GetThreatDelta("Threat Done")); });
             CombatantData.OutgoingDamageTypeDataObjects = new Dictionary<string, CombatantData.DamageTypeDef>
 	        {
@@ -104,16 +128,9 @@ namespace SwtorAddon
             CombatantData.ExportVariables.Remove("powerdrain");
             CombatantData.ExportVariables.Remove("powerheal");
 
-            MasterSwing.ColumnDefs.Remove("Special");
-
             ActGlobals.oFormActMain.ValidateLists();
             ActGlobals.oFormActMain.ValidateTableSetup();
             ActGlobals.oFormActMain.TimeStampLen = 14;
-
-            // All encounters are set by Enter/ExitCombat.
-            UserControl opMainTableGen = (UserControl)ActGlobals.oFormActMain.OptionsControlSets[@"Main Table/Encounters\General"][0];
-            CheckBox cbIdleEnd = (CheckBox)opMainTableGen.Controls["cbIdleEnd"];
-            cbIdleEnd.Checked = false;
         }
 
         private class LogLine
@@ -123,22 +140,31 @@ namespace SwtorAddon
             public string ability;
             public string event_type, event_detail;
             public bool crit_value;
-            public int value;
+            public Dnum value;
             public string value_type;
-            public int threat;
-            
-            static Regex regex = 
-                new Regex(@"\[(.*)\] \[(.*)\] \[(.*)\] \[(.*)\] \[(.*)\] \((.*)\)[\s<]*(\d*)?[>]*", 
+            public Dnum threat;
+            public Dnum absorb;
+            public string special = "None";
+            public string direction = "Increase";
+
+            private string line;
+
+            static Regex regex =
+                new Regex(@"\[(.*)\] \[(.*)\] \[(.*)\] \[(.*)\] \[(.*)\] \((.*)\)[\s<]*(-?\d*)?[>]*",
                     RegexOptions.Compiled);
             static Regex id_regex = new Regex(@"\s*\{\d*}\s*", RegexOptions.Compiled);
-        
-            public LogLine(string line) 
+
+            public LogLine(string logline)
             {
-                line = id_regex.Replace(line, "");
+                line = id_regex.Replace(logline, "");
                 MatchCollection matches = regex.Matches(line);
                 source = matches[0].Groups[2].Value;
                 target = matches[0].Groups[3].Value;
                 ability = matches[0].Groups[4].Value;
+
+                value = new Dnum(0);
+                absorb = new Dnum(0);
+
                 if (matches[0].Groups[5].Value.Contains(":"))
                 {
                     event_type = matches[0].Groups[5].Value.Split(':')[0];
@@ -151,22 +177,58 @@ namespace SwtorAddon
                 }
 
                 crit_value = matches[0].Groups[6].Value.Contains("*");
-                string[] raw_value = matches[0].Groups[6].Value.Replace("*", "").Split(' ');
-                value = raw_value[0].Length > 0 ? int.Parse(raw_value[0]) : 0;
+
+                string damageString = matches[0].Groups[6].Value.Replace("*", "");
+                string absorbString = string.Empty;
+                int dmg = 0, absorbeddmg = 0;
+
+                if (matches[0].Groups[6].Value.Contains("absorbed)"))
+                {
+                    string[] raw_damage = damageString.Split('(');
+                    damageString = raw_damage[0];
+                    absorbString = raw_damage[1];
+                    absorbString = absorbString.Remove(absorbString.Length - 10);
+                    absorbeddmg = int.Parse(absorbString);
+                }
+
+                string[] raw_value = damageString.Split(' ');
+                if (raw_value[0].Length > 0)
+                {
+                    dmg = int.Parse(raw_value[0]);
+                    value = new Dnum(dmg - absorbeddmg);
+                    absorb = new Dnum(absorbeddmg);
+                }
+
                 if (raw_value.Length > 1)
                 {
-                    value_type = raw_value[1];
+                    string[] raw_type = raw_value[1].Split('-');
+                    value_type = raw_type[0];
+                    if (raw_type.Length > 1)
+                        special = raw_type[1];
                 }
                 else
+                    value_type = "Unknown";
+
+                if (value_type.Contains("-miss"))
                 {
-                    value_type = "";
+                    value = Dnum.Miss;
+                    value_type = "Unknown";
                 }
-                threat = matches[0].Groups[7].Value.Length > 0 ? int.Parse(matches[0].Groups[7].Value) : 0;
+                else if (value_type.Contains("-dodge"))
+                {
+                    value = new Dnum(Dnum.Unknown, "Dodge");
+                    value_type = "Unknown";
+                }
+
+                int raw_threat = matches[0].Groups[7].Value.Length > 0 ? int.Parse(matches[0].Groups[7].Value) : 0;
+                if (raw_threat < 0)
+                    direction = "Decrease";
+
+                threat = new Dnum(Math.Abs(raw_threat));
             }
         }
 
         static DateTime default_date = new DateTime(2012, 1, 1);
-        static int last_hour = 0;
         private void ParseLine(bool isImport, LogLineEventArgs log)
         {
             ActGlobals.oFormActMain.GlobalTimeSorter++;
@@ -187,18 +249,30 @@ namespace SwtorAddon
                 log.detectedType = Color.Purple.ToArgb();
                 return;
             }
-           
+
+            if (log.logLine.Contains("{836045448945488}")) // Taunt
+            {
+                log.detectedType = Color.Blue.ToArgb();
+                ActGlobals.oFormActMain.AddCombatAction(THREAT, line.crit_value, line.special, line.source, "Taunt",
+                     line.threat, time, ActGlobals.oFormActMain.GlobalTimeSorter, line.target, line.direction);
+
+                return;
+            }
+
+            if (log.logLine.Contains("{836045448945483}")) // Threat
+            {
+                log.detectedType = Color.Blue.ToArgb();
+                ActGlobals.oFormActMain.AddCombatAction(THREAT, line.crit_value, line.special, line.source, string.IsNullOrEmpty(line.ability) ? "Threat" : line.ability,
+                     line.threat, time, ActGlobals.oFormActMain.GlobalTimeSorter, line.target, line.direction);
+
+                return;
+            }
+
             int type = 0;
             if (log.logLine.Contains("{836045448945501}")) // Damage
             {
                 log.detectedType = Color.Red.ToArgb();
                 type = DMG;
-            }
-            else if (log.logLine.Contains("{836045448945488}") || // Taunt
-                log.logLine.Contains("{836045448945483}")) // Threat
-            {
-                log.detectedType = Color.Blue.ToArgb();
-                type = THREAT;
             }
             else if (log.logLine.Contains("{836045448945500}")) // Heals
             {
@@ -207,10 +281,9 @@ namespace SwtorAddon
             }
             else if (log.logLine.Contains("{836045448945493}")) // Death
             {
-                ActGlobals.oFormActMain.AddCombatAction(DMG, line.crit_value, 
-                    "None", line.source, "Killing Blow", Dnum.Death, time,
+                ActGlobals.oFormActMain.AddCombatAction(DMG, line.crit_value,
+                    line.special, line.source, "Killing Blow", Dnum.Death, time,
                     ActGlobals.oFormActMain.GlobalTimeSorter, line.target, "Death");
-                
             }
 
             /*else if (line.event_type.Contains("Restore"))
@@ -238,10 +311,18 @@ namespace SwtorAddon
             }
             if (line.threat > 0 && ActGlobals.oFormActMain.SetEncounter(time, line.source, line.target))
             {
-                ActGlobals.oFormActMain.AddCombatAction(type, line.crit_value, "None", line.source, line.ability, 
-                    new Dnum(line.value), time, ActGlobals.oFormActMain.GlobalTimeSorter, line.target, line.value_type);
-                ActGlobals.oFormActMain.AddCombatAction(16, line.crit_value, "None", line.source, line.ability, 
-                    new Dnum(line.threat), time, ActGlobals.oFormActMain.GlobalTimeSorter, line.target, "Increase");
+                ActGlobals.oFormActMain.AddCombatAction(type, line.crit_value, line.special, line.source, line.ability,
+                    line.value, time, ActGlobals.oFormActMain.GlobalTimeSorter, line.target, line.value_type);
+
+                ActGlobals.oFormActMain.AddCombatAction(THREAT, line.crit_value, line.special, line.source, line.ability,
+                    line.threat, time, ActGlobals.oFormActMain.GlobalTimeSorter, line.target, (line.threat.Number > 0 ? "Increase" : "Decrease"));
+
+                // FIXME!: tank absorb should be handle in another way
+                if (line.absorb > 0)
+                {
+                    ActGlobals.oFormActMain.AddCombatAction(HEALS, false, "Shield", line.source, line.ability,
+                        line.absorb, time, ActGlobals.oFormActMain.GlobalTimeSorter, line.target, "Absorption");
+                }
             }
             return;
         }
@@ -249,7 +330,7 @@ namespace SwtorAddon
         Regex logfileDateTimeRegex = new Regex(@"combat_(?<Y>\d{4})-(?<M>\d\d)-(?<D>\d\d)_(?<h>\d\d)_(?<m>\d\d)_(?<s>\d\d)_\d+\.txt", RegexOptions.Compiled);
         void oFormActMain_LogFileChanged(bool IsImport, string NewLogFileName)
         {
-            if (NewLogFileName == "")
+            if (!File.Exists(NewLogFileName))
             {
                 return;
             }
@@ -301,6 +382,34 @@ namespace SwtorAddon
             catch
             {
                 return ActGlobals.oFormActMain.LastEstimatedTime;
+            }
+        }
+
+        void oFormActMain_UpdateCheckClicked()
+        {
+            int pluginId = 61;
+            try
+            {
+                DateTime localDate = ActGlobals.oFormActMain.PluginGetSelfDateUtc(this);
+                DateTime remoteDate = ActGlobals.oFormActMain.PluginGetRemoteDateUtc(pluginId);
+                if (localDate.AddHours(2) < remoteDate)
+                {
+                    DialogResult result = MessageBox.Show("There is an updated version of the SwtorParsing Plugin.  Update it now?\n\n(If there is an update to ACT, you should click No and update ACT first.)", "New Version", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+                    if (result == DialogResult.Yes)
+                    {
+                        FileInfo updatedFile = ActGlobals.oFormActMain.PluginDownload(pluginId);
+                        ActPluginData pluginData = ActGlobals.oFormActMain.PluginGetSelfData(this);
+                        pluginData.pluginFile.Delete();
+                        updatedFile.MoveTo(pluginData.pluginFile.FullName);
+                        ThreadInvokes.CheckboxSetChecked(ActGlobals.oFormActMain, pluginData.cbEnabled, false);
+                        Application.DoEvents();
+                        ThreadInvokes.CheckboxSetChecked(ActGlobals.oFormActMain, pluginData.cbEnabled, true);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                ActGlobals.oFormActMain.WriteExceptionLog(ex, "Plugin Update Check");
             }
         }
     }
