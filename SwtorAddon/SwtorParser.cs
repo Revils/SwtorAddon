@@ -209,14 +209,25 @@ namespace SwtorAddon
                 else
                     value_type = "Unknown";
 
-                if (value_type.Contains("-miss"))
+                // TODO: move outside
+                if (value_type.Contains("-miss")) // {836045448945502}
                 {
                     value = Dnum.Miss;
                     value_type = "Unknown";
                 }
-                else if (value_type.Contains("-dodge"))
+                else if (value_type.Contains("-parry")) // {{836045448945503}}
+                {
+                    value = new Dnum(Dnum.Unknown, "Parry");
+                    value_type = "Unknown";
+                }
+                else if (value_type.Contains("-dodge")) // {836045448945505}
                 {
                     value = new Dnum(Dnum.Unknown, "Dodge");
+                    value_type = "Unknown";
+                }
+                else if (value_type.Contains("-deflect")) // {836045448945508}
+                {
+                    value = new Dnum(Dnum.Unknown, "Deflect");
                     value_type = "Unknown";
                 }
 
