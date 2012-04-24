@@ -328,10 +328,9 @@ namespace SwtorAddon
                 ActGlobals.oFormActMain.AddCombatAction(THREAT, line.crit_value, line.special, line.source, line.ability,
                     line.threat, time, ActGlobals.oFormActMain.GlobalTimeSorter, line.target, (line.threat.Number > 0 ? "Increase" : "Decrease"));
 
-                // FIXME!: tank absorb should be handle in another way
                 if (line.absorb > 0)
                 {
-                    ActGlobals.oFormActMain.AddCombatAction(HEALS, false, "Shield", line.source, line.ability,
+                    ActGlobals.oFormActMain.AddCombatAction(HEALS, false, "Shield", line.target, line.ability,
                         line.absorb, time, ActGlobals.oFormActMain.GlobalTimeSorter, line.target, "Absorption");
                 }
             }
